@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-bg text-gray-100;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-bg;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-700 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-600;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-dark-card/50 backdrop-blur-xl border border-dark-border;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-accent-indigo to-accent-purple text-white px-6 py-3 rounded-lg font-medium
+    hover:shadow-glow transition-all duration-300 hover:scale-105;
+  }
+
+  .btn-secondary {
+    @apply bg-dark-card text-gray-300 px-6 py-3 rounded-lg font-medium border border-dark-border
+    hover:bg-dark-hover hover:border-accent-indigo transition-all duration-300;
+  }
+
+  .card {
+    @apply glass rounded-xl p-6 hover:border-accent-indigo/30 transition-all duration-300;
+  }
+
+  .stat-card {
+    @apply card hover:shadow-glow transform hover:-translate-y-1;
+  }
+
+  .input-field {
+    @apply w-full bg-dark-bg border border-dark-border rounded-lg px-4 py-3 text-gray-100
+    focus:border-accent-indigo focus:ring-2 focus:ring-accent-indigo/20 outline-none transition-all;
+  }
+}
+
+/* Gradient Background Animation */
+.gradient-bg {
+  background: linear-gradient(-45deg, #0B0F19, #1a1f2e, #1F2937, #111827);
+  background-size: 400% 400%;
+  animation: gradient 15s ease infinite;
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Loading spinner */
+.spinner {
+  border: 3px solid rgba(99, 102, 241, 0.1);
+  border-top: 3px solid #6366F1;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
