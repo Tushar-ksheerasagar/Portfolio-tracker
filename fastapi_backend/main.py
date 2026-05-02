@@ -11,7 +11,7 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 import yfinance as yf
 from dotenv import load_dotenv
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import pipeline
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -154,19 +154,18 @@ DETAILS_CACHE_DURATION = 1800  # 30 minutes for company details
 RECOMMENDATION_CACHE_DURATION = 3600  # 1 hour for recommendations
 SENTIMENT_CACHE_DURATION = 300  # 5 minutes for sentiment
 
-sentiment_analyzer = SentimentIntensityAnalyzer()
-sentiment_analyzer.lexicon.update({
-    'beat': 2.0,
-    'miss': -2.0,
-    'upgrade': 2.2,
-    'downgrade': -2.2,
-    'outperform': 1.8,
-    'underperform': -1.8,
-    'guidance raise': 2.1,
-    'guidance cut': -2.1,
-    'bullish': 2.0,
-    'bearish': -2.0,
-})
+# Initialize FinBERT sentiment pipeline
+try:
+    sentiment_analyzer = pipeline(
+        "sentiment-analysis",
+        model="ProsusAI/finbert",
+        truncation=True,
+        max_length=512
+    )
+    logger.info("FinBERT model loaded successfully")
+except Exception as e:
+    logger.warning(f"Failed to load FinBERT model: {e}. Sentiment analysis may be unavailable.")
+    sentiment_analyzer = None
 
 def get_cached_data(cache_key: str, duration: int):
     """Check if cached data exists and is still valid"""
@@ -181,20 +180,23 @@ def set_cached_data(cache_key: str, data):
     cache_store[cache_key] = (data, datetime.now())
 
 
-def sentiment_label(score: float) -> str:
-    """Map numeric sentiment score to readable label."""
-    if score >= 0.15:
-        return 'Bullish'
-    if score <= -0.15:
-        return 'Bearish'
-    return 'Neutral'
+def sentiment_label(finbert_label: str) -> str:
+    """Map FinBERT label to readable format."""
+    label_map = {
+        'positive': 'Bullish',
+        'negative': 'Bearish',
+        'neutral': 'Neutral'
+    }
+    return label_map.get(finbert_label.lower(), 'Neutral')
 
 
-def sentiment_signal(score: float, confidence: float) -> str:
-    """Map sentiment score+confidence to a simple trading signal."""
-    if score >= 0.2 and confidence >= 0.3:
+def sentiment_signal(finbert_label: str, score: float) -> str:
+    """Map FinBERT label and score to trading signal."""
+    label_lower = finbert_label.lower()
+    
+    if label_lower == 'positive' and score >= 0.7:
         return 'BUY'
-    if score <= -0.2 and confidence >= 0.3:
+    elif label_lower == 'negative' and score >= 0.7:
         return 'SELL'
     return 'HOLD'
 
@@ -1348,7 +1350,7 @@ async def get_stock_recommendation(symbol: str):
 
 @app.get("/sentiment/{symbol}")
 async def get_stock_sentiment(symbol: str):
-    """Get real-time stock sentiment from Yahoo news using VADER model."""
+    """Get real-time stock sentiment from Yahoo news using FinBERT model."""
     cache_key = f"sentiment_v2_{symbol}"
 
     cached_result = get_cached_data(cache_key, SENTIMENT_CACHE_DURATION)
@@ -1362,7 +1364,7 @@ async def get_stock_sentiment(symbol: str):
         if not raw_news:
             result = {
                 'symbol': symbol,
-                'model': 'VADER',
+                'model': 'FinBERT',
                 'label': 'Neutral',
                 'signal': 'HOLD',
                 'score': 0.0,
@@ -1402,13 +1404,31 @@ async def get_stock_sentiment(symbol: str):
             ).strip()
             text = f"{title}. {summary}".strip()
 
-            if not text:
+            if not text or not sentiment_analyzer:
                 continue
 
-            score = sentiment_analyzer.polarity_scores(text)['compound']
+            try:
+                # Use FinBERT for sentiment analysis
+                result_finbert = sentiment_analyzer(text[:512])[0]
+                finbert_label = result_finbert['label']
+                finbert_score = result_finbert['score']
+                
+                # Convert FinBERT output to numeric score (-1 to 1 range)
+                if finbert_label.lower() == 'positive':
+                    numeric_score = finbert_score
+                elif finbert_label.lower() == 'negative':
+                    numeric_score = -finbert_score
+                else:
+                    numeric_score = 0.0
+                    
+            except Exception as e:
+                logger.debug(f"FinBERT analysis failed for text: {e}")
+                numeric_score = 0.0
+                finbert_label = 'neutral'
+                
             published_at = extract_news_published_at(item, content)
             weight = sentiment_weight(published_at)
-            weighted_sum += score * weight
+            weighted_sum += numeric_score * weight
             total_weight += weight
 
             articles.append({
@@ -1421,8 +1441,8 @@ async def get_stock_sentiment(symbol: str):
                     or ((content.get('clickThroughUrl') or {}).get('url'))
                 ),
                 'published_at': published_at,
-                'score': round(score, 4),
-                'label': sentiment_label(score),
+                'score': round(numeric_score, 4),
+                'label': sentiment_label(finbert_label),
             })
 
         articles.sort(
@@ -1431,13 +1451,22 @@ async def get_stock_sentiment(symbol: str):
         )
 
         final_score = (weighted_sum / total_weight) if total_weight > 0 else 0.0
+        
+        # Determine overall sentiment based on final score
+        if final_score >= 0.15:
+            overall_label = 'positive'
+        elif final_score <= -0.15:
+            overall_label = 'negative'
+        else:
+            overall_label = 'neutral'
+            
         confidence = min(1.0, abs(final_score) * 1.6)
-        signal = sentiment_signal(final_score, confidence)
+        signal = sentiment_signal(overall_label, confidence)
 
         result = {
             'symbol': symbol,
-            'model': 'VADER',
-            'label': sentiment_label(final_score),
+            'model': 'FinBERT',
+            'label': sentiment_label(overall_label),
             'signal': signal,
             'score': round(final_score, 4),
             'confidence': round(confidence, 4),
@@ -1453,7 +1482,7 @@ async def get_stock_sentiment(symbol: str):
         logger.exception("Sentiment fetch error for %s: %s", symbol, e)
         return {
             'symbol': symbol,
-            'model': 'VADER',
+            'model': 'FinBERT',
             'label': 'Neutral',
             'signal': 'HOLD',
             'score': 0.0,
