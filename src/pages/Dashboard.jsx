@@ -6,29 +6,100 @@ import {
   Building2, 
   IndianRupee,
   PieChart as PieChartIcon,
-  UploadCloud
+  Sparkles,
+  ShieldAlert,
+  Target,
+  Layers3,
+  Brain,
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { useEffect, useMemo, useState } from 'react'
+import { analyzePortfolio, formatCurrency, formatDecimal } from '../services/portfolioInsights'
+import { getPortfolioInsights } from '../services/api'
 
 const Dashboard = ({ portfolioData }) => {
   const navigate = useNavigate()
+  const [portfolioInsights, setPortfolioInsights] = useState(null)
+  const analysis = useMemo(() => analyzePortfolio(portfolioData || {}), [portfolioData])
+
+  useEffect(() => {
+    let active = true
+
+    const fetchInsights = async () => {
+      if (!portfolioData) {
+        setPortfolioInsights(null)
+        return
+      }
+
+      try {
+        const result = await getPortfolioInsights()
+        if (active) {
+          setPortfolioInsights(result)
+        }
+      } catch (error) {
+        console.error('Error fetching portfolio insights:', error)
+        if (active) {
+          setPortfolioInsights(null)
+        }
+      }
+    }
+
+    fetchInsights()
+
+    return () => {
+      active = false
+    }
+  }, [portfolioData?.last_updated])
+
+  const insights = portfolioInsights?.insights || []
+  const summary = portfolioInsights?.summary || 'Portfolio insight service is loading.'
+  const action = portfolioInsights?.action || 'Detailed portfolio recommendations will appear once insights are available.'
+  const signal = portfolioInsights?.signal || (analysis.pnl >= 0 ? 'positive' : 'warning')
 
   if (!portfolioData) {
     return (
-      <div className="text-center py-20">
+      <div className="max-w-5xl mx-auto py-16">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
+          className="card relative overflow-hidden"
         >
-          <UploadCloud className="w-24 h-24 mx-auto mb-6 text-gray-600" />
-          <h2 className="text-2xl font-semibold mb-2">No Portfolio Data</h2>
-          <p className="text-gray-400 mb-6">Upload your portfolio to get started</p>
-          <button
-            onClick={() => navigate('/')}
-            className="btn-primary"
-          >
-            Upload Portfolio
-          </button>
+          <div className="absolute inset-0 bg-gradient-to-br from-accent-indigo/10 via-transparent to-accent-pink/10 pointer-events-none" />
+          <div className="relative grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-8 items-center">
+            <div>
+              <p className="text-xs uppercase tracking-[0.28em] text-accent-indigo mb-3">Portfolio Overview</p>
+              <h2 className="text-3xl font-bold text-white mb-3">No portfolio is loaded yet</h2>
+              <p className="text-gray-400 leading-relaxed mb-6">
+                The dashboard is ready once you import holdings. Use the Upload page from the sidebar to bring in your CSV, then this view will fill with analytics, insights, and allocation data.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button onClick={() => navigate('/holdings')} className="btn-secondary">
+                  View Holdings
+                </button>
+                <button onClick={() => navigate('/watchlist')} className="btn-secondary">
+                  Open Watchlist
+                </button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-dark-border bg-dark-bg/60 p-5">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-dark-border bg-dark-card p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Status</p>
+                  <p className="text-lg font-semibold text-white">Waiting for data</p>
+                </div>
+                <div className="rounded-xl border border-dark-border bg-dark-card p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Next step</p>
+                  <p className="text-lg font-semibold text-white">Upload CSV</p>
+                </div>
+                <div className="rounded-xl border border-dark-border bg-dark-card p-4 col-span-2">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">What appears here</p>
+                  <p className="text-sm text-gray-300 leading-relaxed">
+                    Performance cards, allocation charts, concentration checks, and backend-generated recommendations.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         </motion.div>
       </div>
     )
@@ -44,24 +115,13 @@ const Dashboard = ({ portfolioData }) => {
     holdings
   } = portfolioData
 
-  const effectiveInvestedValue = total_invested_value ?? holdings.reduce((sum, h) => sum + (Number(h.invested_value) || 0), 0)
-  const effectivePnl = total_pnl ?? (total_portfolio_value - effectiveInvestedValue)
-  const effectivePnlPct = total_pnl_percentage ?? (effectiveInvestedValue > 0 ? (effectivePnl / effectiveInvestedValue) * 100 : 0)
+  const effectiveInvestedValue = analysis.investedValue ?? total_invested_value ?? holdings.reduce((sum, h) => sum + (Number(h.invested_value) || 0), 0)
+  const effectivePnl = analysis.pnl ?? total_pnl ?? (total_portfolio_value - effectiveInvestedValue)
+  const effectivePnlPct = analysis.pnlPercentage ?? total_pnl_percentage ?? (effectiveInvestedValue > 0 ? (effectivePnl / effectiveInvestedValue) * 100 : 0)
 
   // Prepare data for charts
-  const sectorData = holdings.reduce((acc, holding) => {
-    const sector = holding.sector || 'Unknown'
-    if (!acc[sector]) {
-      acc[sector] = { name: sector, value: 0, percentage: 0 }
-    }
-    acc[sector].value += holding.current_value
-    return acc
-  }, {})
-
-  const sectorChartData = Object.values(sectorData).map(item => ({
-    ...item,
-    percentage: (item.value / total_portfolio_value) * 100
-  })).sort((a, b) => b.value - a.value)
+  const sectorChartData = analysis.sectorAllocation
+  const marketCapChartData = analysis.marketCapAllocation
 
   const topHoldings = [...holdings]
     .sort((a, b) => b.current_value - a.current_value)
@@ -98,6 +158,49 @@ const Dashboard = ({ portfolioData }) => {
     return null
   }
 
+  const statCards = [
+    {
+      title: 'Total Value',
+      value: formatCurrency(total_portfolio_value),
+      detail: `Invested: ${formatCurrency(effectiveInvestedValue)}`,
+      tone: effectivePnl >= 0 ? 'text-green-400' : 'text-red-400',
+      icon: IndianRupee,
+      footer: `P/L: ${effectivePnl >= 0 ? '+' : ''}${formatCurrency(effectivePnl)} (${effectivePnl >= 0 ? '+' : ''}${formatDecimal(effectivePnlPct)}%)`,
+    },
+    {
+      title: 'Total Holdings',
+      value: `${total_holdings}`,
+      detail: 'Positions in your portfolio',
+      tone: 'text-white',
+      icon: Briefcase,
+      footer: `${holdings.length || 0} rows analyzed`,
+    },
+    {
+      title: 'Companies',
+      value: `${number_of_companies}`,
+      detail: 'Unique companies tracked',
+      tone: 'text-white',
+      icon: Building2,
+      footer: 'Diversity of names matters',
+    },
+    {
+      title: 'Diversification',
+      value: `${analysis.diversificationScore}/100`,
+      detail: `${analysis.concentrationLevel} concentration`,
+      tone: analysis.diversificationScore >= 70 ? 'text-green-400' : analysis.diversificationScore >= 45 ? 'text-yellow-400' : 'text-red-400',
+      icon: Layers3,
+      footer: `Top holding: ${formatDecimal(analysis.topHoldingShare)}%`,
+    },
+    {
+      title: 'Winning positions',
+      value: `${analysis.gainers}/${holdings.length || 0}`,
+      detail: 'Profitable holdings',
+      tone: 'text-white',
+      icon: Target,
+      footer: `Average return: ${formatDecimal(analysis.averageHoldingReturn)}%`,
+    },
+  ]
+
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -131,49 +234,84 @@ const Dashboard = ({ portfolioData }) => {
         variants={containerVariants}
         initial="hidden"
         animate="visible"
-        className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8"
       >
-        <motion.div variants={itemVariants} className="stat-card">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-accent-indigo to-accent-purple rounded-lg flex items-center justify-center">
-              <IndianRupee className="w-6 h-6 text-white" />
-            </div>
-          </div>
-          <h3 className="text-gray-400 text-sm mb-1">Total Value</h3>
-          <p className="text-3xl font-bold text-white">
-            ₹{Number(total_portfolio_value).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-          </p>
-          <p className="text-sm text-gray-400 mt-1">
-            Invested: ₹{Number(effectiveInvestedValue).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-          </p>
-          <p className={`text-sm font-semibold mt-1 ${effectivePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            P/L: {effectivePnl >= 0 ? '+' : ''}₹{Number(effectivePnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })} ({effectivePnl >= 0 ? '+' : ''}{Number(effectivePnlPct).toFixed(2)}%)
-          </p>
-        </motion.div>
+        {statCards.map((card) => {
+          const Icon = card.icon
+          return (
+            <motion.div key={card.title} variants={itemVariants} className="stat-card">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 bg-gradient-to-br from-accent-indigo to-accent-purple rounded-lg flex items-center justify-center">
+                  <Icon className="w-6 h-6 text-white" />
+                </div>
+                <span className={`text-xs uppercase tracking-[0.18em] ${card.tone}`}>{card.title}</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{card.value}</p>
+              <p className="text-sm text-gray-400 mt-1">{card.detail}</p>
+              <p className={`text-sm font-semibold mt-1 ${card.tone}`}>{card.footer}</p>
+            </motion.div>
+          )
+        })}
+      </motion.div>
 
-        <motion.div variants={itemVariants} className="stat-card">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-accent-purple to-accent-pink rounded-lg flex items-center justify-center">
-              <Briefcase className="w-6 h-6 text-white" />
+      {/* AI Coach and quick analytics */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8"
+      >
+        <div className="card lg:col-span-2 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-accent-indigo/10 via-transparent to-accent-pink/10 pointer-events-none" />
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-4">
+              <Brain className="w-5 h-5 text-accent-indigo" />
+              <h2 className="text-xl font-semibold">AI Portfolio Coach</h2>
+            </div>
+            <p className="text-lg text-gray-100 leading-relaxed mb-4">{summary}</p>
+            <p className="text-gray-400 mb-5">{action}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-1">Signal</p>
+                <p className="text-lg font-semibold text-white">{signal === 'positive' ? 'Bullish' : signal === 'negative' ? 'Bearish' : 'Caution'}</p>
+              </div>
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-1">Diversification</p>
+                <p className="text-lg font-semibold text-white">{analysis.diversificationScore}/100</p>
+              </div>
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-1">Concentration</p>
+                <p className="text-lg font-semibold text-white">{formatDecimal(analysis.topHoldingShare)}%</p>
+              </div>
             </div>
           </div>
-          <h3 className="text-gray-400 text-sm mb-1">Total Holdings</h3>
-          <p className="text-3xl font-bold text-white">{total_holdings}</p>
-        </motion.div>
+        </div>
 
-        <motion.div variants={itemVariants} className="stat-card">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-accent-pink to-accent-indigo rounded-lg flex items-center justify-center">
-              <Building2 className="w-6 h-6 text-white" />
-            </div>
+        <div className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-5 h-5 text-accent-pink" />
+            <h2 className="text-xl font-semibold">Quick Signals</h2>
           </div>
-          <h3 className="text-gray-400 text-sm mb-1">Companies</h3>
-          <p className="text-3xl font-bold text-white">{number_of_companies}</p>
-        </motion.div>
+          {insights.length > 0 ? (
+            <div className="space-y-3">
+              {insights.map((insight) => (
+                <div key={insight.title} className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${insight.tone === 'positive' ? 'bg-green-400' : insight.tone === 'warning' ? 'bg-yellow-400' : insight.tone === 'negative' ? 'bg-red-400' : 'bg-accent-indigo'}`} />
+                    <p className="text-sm font-semibold text-white">{insight.title}</p>
+                  </div>
+                  <p className="text-sm text-gray-400 leading-relaxed">{insight.text}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400">Loading insight summaries from the backend...</p>
+          )}
+        </div>
       </motion.div>
 
       {/* Charts */}
-      <div className="mb-8">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
         {/* Sector Allocation */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
@@ -223,6 +361,36 @@ const Dashboard = ({ portfolioData }) => {
                 ))}
               </div>
             </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.45 }}
+          className="card"
+        >
+          <div className="flex items-center gap-2 mb-6">
+            <ShieldAlert className="w-5 h-5 text-accent-pink" />
+            <h2 className="text-xl font-semibold">Market Cap Mix</h2>
+          </div>
+          <div className="space-y-4">
+            {marketCapChartData.length > 0 ? marketCapChartData.map((entry, index) => (
+              <div key={entry.name}>
+                <div className="flex items-center justify-between mb-2 text-sm">
+                  <span className="text-gray-300">{entry.name}</span>
+                  <span className="text-gray-400">{entry.percentage.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-dark-bg overflow-hidden border border-dark-border">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-accent-indigo via-accent-purple to-accent-pink"
+                    style={{ width: `${Math.max(4, entry.percentage)}%` }}
+                  />
+                </div>
+              </div>
+            )) : (
+              <p className="text-gray-400">No market cap information available.</p>
+            )}
           </div>
         </motion.div>
       </div>

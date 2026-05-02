@@ -1,13 +1,17 @@
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Search, UploadCloud, Pencil, Save, X, TrendingUp, DollarSign } from 'lucide-react'
-import { useState, useMemo } from 'react'
+import { Search, UploadCloud, Pencil, Save, X, TrendingUp, DollarSign, Star, Filter, Brain, Flame } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { analyzePortfolio, formatCurrency, formatDecimal, getWatchlist, toggleWatchlist, isWatched } from '../services/portfolioInsights'
+import { getPortfolioInsights } from '../services/api'
 
 const Holdings = ({ portfolioData }) => {
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
   const [editingSymbol, setEditingSymbol] = useState(null)
   const [editQuantities, setEditQuantities] = useState({})
+  const [watchlistVersion, setWatchlistVersion] = useState(0)
+  const [portfolioInsights, setPortfolioInsights] = useState(null)
 
   if (!portfolioData) {
     return (
@@ -31,6 +35,41 @@ const Holdings = ({ portfolioData }) => {
   }
 
   const { holdings } = portfolioData
+  const analysis = useMemo(() => analyzePortfolio(portfolioData), [portfolioData])
+  const watchlist = useMemo(() => getWatchlist(), [watchlistVersion])
+
+  useEffect(() => {
+    let active = true
+
+    const fetchInsights = async () => {
+      if (!portfolioData) {
+        setPortfolioInsights(null)
+        return
+      }
+
+      try {
+        const result = await getPortfolioInsights()
+        if (active) {
+          setPortfolioInsights(result)
+        }
+      } catch (error) {
+        console.error('Error fetching portfolio insights:', error)
+        if (active) {
+          setPortfolioInsights(null)
+        }
+      }
+    }
+
+    fetchInsights()
+
+    return () => {
+      active = false
+    }
+  }, [portfolioData?.last_updated])
+
+  const insights = portfolioInsights?.insights || []
+  const summary = portfolioInsights?.summary || 'Loading portfolio insights from the backend...'
+  const action = portfolioInsights?.action || 'Backend recommendations will appear once insight data is available.'
 
   // Calculate updated portfolio values when quantities change
   const updatedHoldings = useMemo(() => {
@@ -80,6 +119,11 @@ const Holdings = ({ portfolioData }) => {
     [holdingsWithPercentage, searchTerm]
   )
 
+  const visibleWatchlist = useMemo(() => {
+    const symbols = new Set(watchlist.map((item) => item.symbol))
+    return holdingsWithPercentage.filter((holding) => symbols.has(holding.symbol))
+  }, [holdingsWithPercentage, watchlist])
+
   const handleEditStart = (symbol, currentQuantity) => {
     setEditingSymbol(symbol)
     setEditQuantities({ ...editQuantities, [symbol]: currentQuantity })
@@ -105,6 +149,11 @@ const Holdings = ({ portfolioData }) => {
     if (editingSymbol !== symbol) {
       navigate(`/company/${symbol}`)
     }
+  }
+
+  const handleWatchlistToggle = (holding) => {
+    toggleWatchlist(holding)
+    setWatchlistVersion((value) => value + 1)
   }
 
   return (
@@ -168,6 +217,47 @@ const Holdings = ({ portfolioData }) => {
         </div>
       </motion.div>
 
+      {/* Portfolio Coach */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6"
+      >
+        <div className="card lg:col-span-2">
+          <div className="flex items-center gap-2 mb-4">
+            <Brain className="w-5 h-5 text-accent-indigo" />
+            <h2 className="text-xl font-semibold">AI Portfolio Coach</h2>
+          </div>
+          <p className="text-lg text-white leading-relaxed mb-3">{summary}</p>
+          <p className="text-gray-400">{action}</p>
+          <div className="flex flex-wrap gap-3 mt-5">
+            <span className="px-3 py-1.5 rounded-full bg-accent-indigo/20 text-accent-indigo text-sm font-medium">Diversification {analysis.diversificationScore}/100</span>
+            <span className="px-3 py-1.5 rounded-full bg-accent-purple/20 text-accent-purple text-sm font-medium">Top holding {formatDecimal(analysis.topHoldingShare)}%</span>
+            <span className="px-3 py-1.5 rounded-full bg-accent-pink/20 text-accent-pink text-sm font-medium">Watchlist {watchlist.length} names</span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <Flame className="w-5 h-5 text-yellow-400" />
+            <h2 className="text-xl font-semibold">Top Signals</h2>
+          </div>
+            {insights.length > 0 ? (
+              <div className="space-y-3">
+                {insights.slice(0, 3).map((insight) => (
+                  <div key={insight.title} className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                    <p className="font-medium text-white mb-1">{insight.title}</p>
+                    <p className="text-sm text-gray-400 leading-relaxed">{insight.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">Loading backend insights...</p>
+            )}
+        </div>
+      </motion.div>
+
       {/* Search Bar */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -175,16 +265,30 @@ const Holdings = ({ portfolioData }) => {
         transition={{ delay: 0.2 }}
         className="mb-6"
       >
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search by company name or symbol..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="input-field pl-12"
-            aria-label="Search holdings"
-          />
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by company name or symbol..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="input-field pl-12"
+              aria-label="Search holdings"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-dark-border bg-dark-card px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <Filter className="w-4 h-4 text-accent-indigo" />
+              <span>{filteredHoldings.length} visible / {holdings.length} total</span>
+            </div>
+            <button
+              onClick={() => navigate('/watchlist')}
+              className="px-3 py-2 rounded-lg bg-accent-indigo/20 text-accent-indigo text-sm font-medium hover:bg-accent-indigo/30 transition-colors"
+            >
+              Open Watchlist
+            </button>
+          </div>
         </div>
       </motion.div>
 
@@ -276,8 +380,9 @@ const Holdings = ({ portfolioData }) => {
                     </span>
                   </td>
                   <td className="text-center py-4 px-4">
+                    <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
                     {editingSymbol === holding.symbol ? (
-                      <div className="flex gap-2 justify-center" onClick={(e) => e.stopPropagation()}>
+                      <>
                         <motion.button
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.95 }}
@@ -298,22 +403,35 @@ const Holdings = ({ portfolioData }) => {
                         >
                           <X className="w-4 h-4" />
                         </motion.button>
-                      </div>
+                      </>
                     ) : (
-                      <motion.button
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleEditStart(holding.symbol, holding.quantity)
-                        }}
-                        className="p-2 bg-accent-indigo/20 text-accent-indigo rounded hover:bg-accent-indigo/30 transition-colors"
-                        title="Edit quantity"
-                        aria-label={`Edit quantity for ${holding.company_name}`}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </motion.button>
+                      <>
+                        <motion.button
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => handleWatchlistToggle(holding)}
+                          className={`p-2 rounded transition-colors ${isWatched(holding.symbol) ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' : 'bg-dark-hover text-gray-400 hover:bg-dark-border'}`}
+                          title={isWatched(holding.symbol) ? 'Remove from watchlist' : 'Add to watchlist'}
+                          aria-label={`${isWatched(holding.symbol) ? 'Remove' : 'Add'} ${holding.company_name} from watchlist`}
+                        >
+                          <Star className={`w-4 h-4 ${isWatched(holding.symbol) ? 'fill-current' : ''}`} />
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleEditStart(holding.symbol, holding.quantity)
+                          }}
+                          className="p-2 bg-accent-indigo/20 text-accent-indigo rounded hover:bg-accent-indigo/30 transition-colors"
+                          title="Edit quantity"
+                          aria-label={`Edit quantity for ${holding.company_name}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </motion.button>
+                      </>
                     )}
+                    </div>
                   </td>
                 </motion.tr>
               ))}
@@ -339,6 +457,36 @@ const Holdings = ({ portfolioData }) => {
           </div>
         )}
       </motion.div>
+
+      {visibleWatchlist.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="card mt-8"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Star className="w-5 h-5 text-yellow-400 fill-current" />
+            <h2 className="text-xl font-semibold">Watchlist Picks</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {visibleWatchlist.map((holding) => (
+              <button
+                key={holding.symbol}
+                onClick={() => navigate(`/company/${holding.symbol}`)}
+                className="text-left rounded-xl border border-dark-border bg-dark-bg/60 p-4 hover:border-accent-indigo/40 hover:bg-dark-hover transition-colors"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white">{holding.company_name}</span>
+                  <span className="text-xs px-2 py-1 rounded-full bg-accent-indigo/20 text-accent-indigo">{holding.symbol}</span>
+                </div>
+                <p className="text-sm text-gray-400">{holding.sector || 'Sector not available'}</p>
+                <p className="text-sm text-gray-500 mt-2">{holding.market_cap_category || 'Market-cap category unavailable'}</p>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      )}
     </div>
   )
 }

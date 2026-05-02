@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev:frontend": "vite",
+    "dev:backend": "cd fastapi_backend && uvicorn main:app --reload --port 5000",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node backend/server.js",
-    "server:dev": "nodemon backend/server.js"
+    "lint": "eslint ./src --ext .js,.jsx || true",
+    "format": "prettier --write ."
+    ,"analyze": "vite build --mode production && rollup -i dist/assets/index.*.js -p @rollup/plugin-visualizer --file stats.html"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -35,6 +38,7 @@
     "tailwindcss": "^3.4.1",
     "postcss": "^8.4.35",
     "autoprefixer": "^10.4.17",
-    "nodemon": "^3.0.3"
+    "nodemon": "^3.0.3",
+    "concurrently": "^8.2.0"
   }
 }

@@ -10,9 +10,12 @@ import {
   BarChart3,
   Info,
   Newspaper,
+  Brain,
+  Star,
 } from 'lucide-react'
-import { getCompanyDetails, getStockSentiment } from '../services/api'
+import { getCompanyDetails, getCompanyInsights, getLiveQuote } from '../services/api'
 import StockChart from '../components/StockChart'
+import { formatCurrency, formatDecimal, isWatched, toggleWatchlist } from '../services/portfolioInsights'
 
 // Tooltip definitions for financial metrics
 const METRIC_EXPLANATIONS = {
@@ -75,8 +78,9 @@ const CompanyDetails = () => {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
   const [liveQuote, setLiveQuote] = useState(null)
-  const [sentiment, setSentiment] = useState(null)
+  const [companyInsights, setCompanyInsights] = useState(null)
   const [activeSection, setActiveSection] = useState('chart')
+  const [watchlistVersion, setWatchlistVersion] = useState(0)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -92,24 +96,24 @@ const CompanyDetails = () => {
     }
 
     fetchData()
-    // Refresh company details every 30 seconds for real-time updates
-    const interval = setInterval(fetchData, 30000)
+    // Refresh company details every 5 minutes to match backend cache cadence
+    const interval = setInterval(fetchData, 300000)
     return () => clearInterval(interval)
   }, [symbol])
 
-  // Fetch and refresh sentiment periodically
+  // Fetch and refresh backend company insights periodically
   useEffect(() => {
-    const fetchSentiment = async () => {
+    const fetchInsights = async () => {
       try {
-        const sentimentData = await getStockSentiment(symbol)
-        setSentiment(sentimentData)
-      } catch (err) {
-        console.error('Error fetching sentiment:', err)
+        const insightsData = await getCompanyInsights(symbol)
+        setCompanyInsights(insightsData)
+      } catch (error) {
+        console.error('Error fetching company insights:', error)
       }
     }
 
-    fetchSentiment()
-    const interval = setInterval(fetchSentiment, 30000)
+    fetchInsights()
+    const interval = setInterval(fetchInsights, 300000)
     return () => clearInterval(interval)
   }, [symbol])
 
@@ -117,19 +121,16 @@ const CompanyDetails = () => {
   useEffect(() => {
     const fetchLiveQuote = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/live-quote/${symbol}`)
-        if (response.ok) {
-          const data = await response.json()
-          setLiveQuote(data)
-        }
+        const data = await getLiveQuote(symbol)
+        setLiveQuote(data)
       } catch (err) {
         console.error('Error fetching live quote:', err)
       }
     }
 
     fetchLiveQuote()
-    // Refresh live quote every 5 seconds
-    const interval = setInterval(fetchLiveQuote, 5000)
+    // Refresh live quote every minute to balance freshness and API load
+    const interval = setInterval(fetchLiveQuote, 60000)
     return () => clearInterval(interval)
   }, [symbol])
 
@@ -160,15 +161,30 @@ const CompanyDetails = () => {
   const hasRatios = financial_ratios?.length > 0
   const hasIncome = income_statement?.length > 0
   const hasCashFlow = cash_flow?.length > 0
+  const sentiment = companyInsights?.sentiment || null
+  const recommendation = companyInsights?.recommendation || null
+  const companyAI = companyInsights || null
   const hasSentiment = Boolean(sentiment)
+  const watched = isWatched(symbol) || Boolean(watchlistVersion && isWatched(symbol))
 
   const sections = [
     { key: 'chart', label: 'Chart', enabled: true },
+    { key: 'ai', label: 'AI', enabled: true },
     { key: 'ratios', label: 'Ratios', enabled: hasRatios },
     { key: 'income', label: 'Income Statement', enabled: hasIncome },
     { key: 'cashflow', label: 'Cash Flow', enabled: hasCashFlow },
     { key: 'sentiment', label: 'Sentiment', enabled: hasSentiment },
   ]
+
+  const handleWatchlistToggle = () => {
+    toggleWatchlist({
+      symbol: stock_info.symbol,
+      company_name: stock_info.company_name,
+      sector: stock_info.sector,
+      market_cap_category: stock_info.market_cap_category,
+    })
+    setWatchlistVersion((value) => value + 1)
+  }
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -198,6 +214,13 @@ const CompanyDetails = () => {
               )}
             </div>
           </div>
+          <button
+            onClick={handleWatchlistToggle}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${watched ? 'border-yellow-400/40 bg-yellow-500/10 text-yellow-300' : 'border-dark-border bg-dark-card text-gray-200 hover:border-accent-indigo hover:text-white'}`}
+          >
+            <Star className={`w-4 h-4 ${watched ? 'fill-current' : ''}`} />
+            {watched ? 'Saved to Watchlist' : 'Add to Watchlist'}
+          </button>
         </div>
       </motion.div>
 
@@ -212,7 +235,7 @@ const CompanyDetails = () => {
           <div>
             <p className="text-gray-400 mb-2">Current Price</p>
             <p className="text-4xl font-bold">
-              ₹{liveQuote?.ltp ? Number(liveQuote.ltp).toFixed(2) : (stock_info.current_price ? Number(stock_info.current_price).toFixed(2) : 'N/A')}
+              {liveQuote?.ltp ? formatCurrency(liveQuote.ltp) : (stock_info.current_price ? formatCurrency(stock_info.current_price) : 'N/A')}
             </p>
             {liveQuote?.ltp && liveQuote?.previousClose && (
               <div className="flex items-center gap-2 mt-2">
@@ -235,11 +258,66 @@ const CompanyDetails = () => {
             {(liveQuote?.marketCap || stock_info.market_cap) && (
               <MetricWithTooltip
                 label="Market Cap"
-                value={`₹${(Number(liveQuote?.marketCap || stock_info.market_cap) / 10000000).toFixed(2)} Cr`}
+                value={`₹${formatDecimal(Number(liveQuote?.marketCap || stock_info.market_cap) / 10000000)} Cr`}
                 explanation={METRIC_EXPLANATIONS.market_cap}
                 className="text-2xl font-semibold"
               />
             )}
+          </div>
+        </div>
+      </motion.div>
+
+      {/* AI Snapshot */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="card mb-8"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Brain className="w-5 h-5 text-accent-indigo" />
+          <h2 className="text-2xl font-semibold">AI Snapshot</h2>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-6">
+          <div>
+            <p className="text-lg text-white leading-relaxed mb-4">
+              {companyAI?.summary || 'Loading backend company insights...'}
+            </p>
+            <div className="space-y-3">
+              {(companyAI?.bullets || []).length > 0 ? companyAI.bullets.map((bullet) => (
+                <div key={bullet} className="flex items-start gap-3 rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                  <span className="mt-1 w-2.5 h-2.5 rounded-full bg-accent-indigo flex-shrink-0" />
+                  <p className="text-sm text-gray-300 leading-relaxed">{bullet}</p>
+                </div>
+              )) : (
+                <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4 text-sm text-gray-400">
+                  Backend recommendations and sentiment are loading.
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-dark-border bg-dark-bg/60 p-5">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Model view</p>
+            <p className={`text-3xl font-bold mb-3 ${companyAI?.signal === 'Positive' ? 'text-green-400' : companyAI?.signal === 'Neutral' ? 'text-yellow-400' : 'text-red-400'}`}>
+              {companyAI?.signal || 'Loading'}
+            </p>
+            <p className="text-gray-400 text-sm leading-relaxed mb-4">This card is generated from backend recommendation, sentiment, and fundamentals APIs.</p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Confidence score</span>
+                <span className="font-semibold text-white">{companyAI?.score != null ? `${companyAI.score}/100` : 'Loading'}</span>
+              </div>
+              <div className="h-2 rounded-full bg-dark-bg border border-dark-border overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-accent-indigo via-accent-purple to-accent-pink" style={{ width: `${companyAI?.score || 0}%` }} />
+              </div>
+              {recommendation && (
+                <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-1">Recommendation</p>
+                  <p className="text-lg font-semibold text-white">{recommendation.recommendation || 'Hold'}</p>
+                  <p className="text-sm text-gray-400 mt-1">Target price: {recommendation.target_price ? formatCurrency(recommendation.target_price) : 'N/A'}</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </motion.div>
@@ -278,6 +356,33 @@ const CompanyDetails = () => {
         {activeSection === 'chart' && (
           <div className="min-h-[320px]">
             <StockChart symbol={symbol} />
+          </div>
+        )}
+
+        {activeSection === 'ai' && (
+          <div>
+            <div className="flex items-center gap-2 mb-6">
+              <Brain className="w-5 h-5 text-accent-indigo" />
+              <h3 className="text-xl font-semibold">AI Checklist</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-gray-400 text-sm mb-1">Signal</p>
+                <p className="text-2xl font-bold text-white">{companyAI?.signal || 'Loading'}</p>
+              </div>
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-gray-400 text-sm mb-1">Quality tilt</p>
+                <p className="text-2xl font-bold text-white">{ratios.roe != null ? `${formatDecimal(ratios.roe)}% ROE` : 'No ROE data'}</p>
+              </div>
+              <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-4">
+                <p className="text-gray-400 text-sm mb-1">Price action</p>
+                <p className="text-2xl font-bold text-white">{liveQuote?.previousClose ? `${formatDecimal(((liveQuote.ltp - liveQuote.previousClose) / liveQuote.previousClose) * 100)}%` : 'N/A'}</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-dark-border bg-dark-bg/60 p-5">
+              <p className="text-sm uppercase tracking-[0.2em] text-gray-500 mb-3">AI recommendation</p>
+              <p className="text-gray-300 leading-relaxed">{companyAI?.summary || 'Loading backend company insight summary...'}</p>
+            </div>
           </div>
         )}
 

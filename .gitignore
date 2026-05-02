@@ -1,8 +1,26 @@
-node_modules
-dist
-uploads
+# Node
+node_modules/
+dist/
+
+# Uploads (user data)
+uploads/
+
+# Environment
 .env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.pytest_cache/
+
+# Logs
 *.log
+
+# Editor
+.vscode/
 .DS_Store
-.vscode
 *.csv

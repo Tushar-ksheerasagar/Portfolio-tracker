@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: capstone_db
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+
+  backend:
+    build: ./fastapi_backend
+    env_file: .env
+    depends_on:
+      - postgres
+    ports:
+      - '5000:5000'
+    restart: unless-stopped
+
+  frontend:
+    build: .
+    ports:
+      - '3000:80'
+    restart: unless-stopped
+
+volumes:
+  db_data:

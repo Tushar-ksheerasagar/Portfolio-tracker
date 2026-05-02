@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
+import { getLiveQuote, getStockChart } from '../services/api'
 
 // Debounce utility
 const debounce = (func, wait) => {
@@ -89,12 +90,9 @@ const StockChart = ({ symbol }) => {
 
   const fetchLiveQuote = useCallback(async () => {
     try {
-      const response = await fetch(`http://localhost:5000/live-quote/${symbol}`)
-      if (response.ok) {
-        const data = await response.json()
-        setLiveQuote(data)
-        setError(null)
-      }
+      const data = await getLiveQuote(symbol)
+      setLiveQuote(data)
+      setError(null)
     } catch (err) {
       console.error('Error fetching live quote:', err)
     }
@@ -110,29 +108,21 @@ const StockChart = ({ symbol }) => {
     setLoading(true)
 
     try {
-      const response = await fetch(
-        `http://localhost:5000/stock-chart/${symbol}?period=${timeframe}`,
-        { signal: fetchAbortController.current.signal }
-      )
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (result.success && result.data.length > 0) {
-          // Format data for recharts
-          const formattedData = result.data.map(item => ({
-            ...item,
-            time: formatTime(item.date, timeframe),
-            fullDate: item.date,
-          }))
-          setChartData(formattedData)
-          setIsInitialLoad(false)
-          setError(null)
-        } else {
-          setError('No chart data available')
-          setChartData([])
-        }
+      const result = await getStockChart(symbol, timeframe, {
+        signal: fetchAbortController.current.signal,
+      })
+
+      if (result.success && result.data.length > 0) {
+        const formattedData = result.data.map(item => ({
+          ...item,
+          time: formatTime(item.date, timeframe),
+          fullDate: item.date,
+        }))
+        setChartData(formattedData)
+        setIsInitialLoad(false)
+        setError(null)
       } else {
-        setError('Failed to fetch chart data')
+        setError('No chart data available')
         setChartData([])
       }
     } catch (err) {

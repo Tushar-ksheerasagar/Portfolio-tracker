@@ -64,6 +64,7 @@ DB_PORT=5432
 
 JWT_SECRET_KEY=change-this-in-production
 JWT_EXPIRE_MINUTES=1440
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
 ## Install and Run
@@ -141,7 +142,7 @@ Infosys,8,1525.75
 
 ## Notes
 
-- Frontend API base URL is set in `src/services/api.js` as `http://localhost:5000`.
+- Frontend API base URL defaults to `/api` and can be overridden with `VITE_API_BASE_URL`.
 - Keep secrets out of Git (do not commit `.env`).
 - Default CORS is permissive for development; restrict for production.
 
